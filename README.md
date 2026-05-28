@@ -1,37 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Medium Article RAG Assistant
 
-## Getting Started
+A Retrieval-Augmented Generation (RAG) system that answers questions **only** from a corpus of ~7,600 English Medium articles. Built with Next.js, Pinecone, and OpenAI-compatible models, deployed on Vercel.
 
-First, run the development server:
+## How It Works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Question → embed → search Pinecone → retrieve top chunks
+        → build augmented prompt → gpt-5-mini answers using ONLY that context
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Embed** the question with `text-embedding-3-small` (1536 dims).
+2. **Retrieve** the most semantically similar chunks from Pinecone (cosine similarity).
+3. **De-duplicate** by article (keep the best chunk per article) so list-type questions return *distinct* articles.
+4. **Augment** a prompt with the retrieved passages.
+5. **Generate** the answer with `gpt-5-mini`, constrained to use only the provided context.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Chosen Hyperparameters
 
-## Learn More
+| Parameter | Value | Reason |
+|-----------|-------|--------|
+| `chunk_size` | 512 words | Best balance of retrieval quality vs. context cost |
+| `overlap_ratio` | 0.2 | Preserves context across chunk boundaries without excessive duplication |
+| `top_k` | 5 | Enough context for grounded answers without bloating the prompt |
 
-To learn more about Next.js, take a look at the following resources:
+### Why these settings (experiment summary)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+I compared three configurations on a 100-article subset, embedding each into a
+separate Pinecone namespace and querying all of them with the four assignment
+question types:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Config | Q1 top1 | Q2 top1 | Q3 top1 | Q4 top1 |
+|--------|---------|---------|---------|---------|
+| 512 / 0.20  | 0.6314 | 0.5465 | 0.6585 | 0.5555 |
+| 256 / 0.15  | 0.6130 | 0.5462 | 0.6301 | 0.5498 |
+| 1024 / 0.30 | 0.6366 | 0.5485 | 0.6585 | 0.5788 |
 
-## Deploy on Vercel
+**Findings:** All three configs retrieved the correct article at rank #1 for every
+question, so retrieval is robust. `1024/0.30` had marginally higher top-1 scores but
+pushes far more tokens into the model context per query (higher cost). `512/0.20` matched it closely on quality
+while using roughly half the context, so i chose **512 / 0.20** as the best
+quality-to-cost tradeoff.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API Endpoints
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# Medium RAG
+### `POST /api/prompt`
+**Input:** `{ "question": "..." }`
+**Output:** `{ "response": ..., "context": [...], "augmented_prompt": { "System": ..., "User": ... } }`
+
+### `GET /api/stats`
+**Output:** `{ "chunk_size": 512, "overlap_ratio": 0.2, "top_k": 5 }`
+
+## Cost Control
+
+- Started with a 100-article subset to validate the full pipeline before scaling.
+- Tuned hyperparameters on the subset (cheap) rather than the full corpus.
+- Ingestion uses a progress file to resume after interruptions without re-embedding.
+- Eval measures retrieval only (no expensive chat-model calls).
+
+## Tech Stack
+
+- **Next.js** (App Router) — API + deployment
+- **Pinecone** — vector database (cosine, 1536 dims)
+- **OpenAI-compatible API** — `text-embedding-3-small` + `gpt-5-mini`
+- **Vercel** — hosting
