@@ -19,7 +19,7 @@ const index = pinecone.index(process.env.PINECONE_INDEX_NAME);
 // ─── HYPERPARAMETERS ──────────────────────────────
 const CHUNK_SIZE    = 512;
 const OVERLAP       = 0.2;
-const LIMIT         = 7638;
+const LIMIT         = 7682;
 const PROGRESS_FILE = './ingest-progress.json';
 // ──────────────────────────────────────────────────
 
